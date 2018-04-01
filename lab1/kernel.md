@@ -164,7 +164,7 @@ find . | cpio -oHnewc | gzip > ../initramfs.gz
 ```
 /bin/sh: can't access tty;job control  turned off
 ```
-
+如图所示![启动错误](./start_error.png)
 参照一些资料，目前未找到解决办法。
 
 
@@ -191,3 +191,54 @@ pid = kernel_thread(kthreadd, NULL, CLONE_FS | CLONE_FILES)
 ### 进一步细化
 根据参考资料[Linux 内核揭密](https://xinqiu.gitbooks.io/linux-insides-cn/)
 下面进一步追踪内核启动的过程
+为了字体清楚，使用直接在终端输出而不打开qemu窗口的方式，在启动qemu的时候加上参数:
+```
+-nographic -append "console=ttyS0"
+```
+
+- 与参考资料不同，我这个版本的linux内核，第一个函数是
+```
+set_task_stack_end_magic(&init_task);
+```
+而不是
+```
+lockdep_init();
+```
+这个函数功能是设置canary init 进程以检测堆栈溢出。
+下一个函数是
+```
+smp_setup_processor_id();
+```
+追踪进去之后发现是一个空函数。之后进行追踪关键事件。
+
+- 激活第一个CPU
+```
+boot_cpu_init();
+```
+![cpuboot](./cpu_boot.png)
+内部函数如上图，
+
+- 依赖于体系结构的初始化部分
+`setup_arch(&command_line);`
+这是一个很庞大的函数，没有完全明白具体的功能，暂放。
+
+- trap_init
+做体系相关的中断处理的初始化
+![trap_init](./trap_init.png)
+
+- sched_init()
+初始化系统调度进程，初始化定时器和时钟中断。
+
+- time_init()
+体系相关的timer初始化，根据硬件设计情况设置时钟中断号和时钟频率等。
+
+- console_init()
+控制台初始化，在这里来完成，主要是为了提前看到信息，便于看到错误。
+
+- rest_init()
+在start_kernel()里面最后一个函数是 `rest_init()`
+这个函数做的事情包括
+  - 调用kernel_thread函数启动了2个内核线程，分别是：kernel_init和kthreadd
+  - 调用schedule函数开启了内核的调度系统，从此linux系统开始运行
+  - 最终调用cpu_idle函数结束了整个内核的启动
+  - linux内核最终的状态是：有事干的时候去执行有意义的工作（执行各个进程任务），没活干的时候死循环
